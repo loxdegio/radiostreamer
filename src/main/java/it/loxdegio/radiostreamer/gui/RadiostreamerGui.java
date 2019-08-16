@@ -11,18 +11,22 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.RandomAccessFile;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 import javax.swing.JPanel;
 
@@ -42,10 +46,18 @@ import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 import org.springframework.util.ResourceUtils;
 
-import javazoom.jl.player.Player;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
+import javafx.scene.media.MediaView;
+import net.sourceforge.jaad.aac.AACException;
 import net.sourceforge.jaad.aac.Decoder;
 import net.sourceforge.jaad.aac.SampleBuffer;
 import net.sourceforge.jaad.adts.ADTSDemultiplexer;
+import net.sourceforge.jaad.mp4.MP4Container;
+import net.sourceforge.jaad.mp4.api.AudioTrack;
+import net.sourceforge.jaad.mp4.api.Frame;
+import net.sourceforge.jaad.mp4.api.Movie;
+import net.sourceforge.jaad.mp4.api.Track;
 
 public class RadiostreamerGui extends JPanel {
 
@@ -53,15 +65,19 @@ public class RadiostreamerGui extends JPanel {
 
 	private static final String uri = "http://radio-in-diretta.com";
 
-	private Future<?> playerThread;
+	private WebDriver driver;
 
-	private ExecutorService executor;
+	private Future<?> playerThread, readAACThread;
 
-	private Player player;
+	private ExecutorService executor = Executors.newFixedThreadPool(10);
 
-	private boolean isPlaying = false;
+	private MediaView mediaView = new MediaView();
 
-	private boolean stop = false;
+	SourceDataLine sourceDataLine;
+
+	List<byte[]> aacBuffer;
+
+	private boolean isPlaying = false, isAAC = false;
 
 	public RadiostreamerGui(LayoutManager layout) throws Exception {
 
@@ -83,13 +99,13 @@ public class RadiostreamerGui extends JPanel {
 
 		});
 
+		aacBuffer = Collections.synchronizedList(new LinkedList<>());
+
 		for (Element radioStation : radioStations) {
 			final Elements link = radioStation.select("a");
 			final RadiostreamButton button = new RadiostreamButton(link.get(0).absUrl("href"), link.get(0).text());
 			button.addMouseListener(new MouseListener() {
 				public void mouseClicked(MouseEvent e) {
-
-					WebDriver driver = null;
 					try {
 
 						ChromeOptions options = new ChromeOptions();
@@ -116,14 +132,25 @@ public class RadiostreamerGui extends JPanel {
 
 						stop();
 
-						play(src);
+						final String url = src;
+						playerThread = executor.submit(new Runnable() {
 
+							@Override
+							public void run() {
+								while (true) {
+									play(url);
+									try {
+										Thread.sleep(9900);
+									} catch (InterruptedException e) {
+									}
+								}
+							}
+						});
 					} catch (Exception ex) {
 						ex.printStackTrace();
 					} finally {
-						if (driver != null) {
+						if (driver != null)
 							driver.quit();
-						}
 					}
 				}
 
@@ -149,59 +176,111 @@ public class RadiostreamerGui extends JPanel {
 	}
 
 	private void play(final String streamURI) {
-		executor = Executors.newSingleThreadExecutor();
-		playerThread = executor.submit(new Runnable() {
-
-			@Override
-			public void run() {
-				try {
-					// Playing
-					if (StringUtils.endsWith(streamURI, ".mp3"))
-						play(openConnection(streamURI));
-					else if(StringUtils.endsWith(streamURI, ".m3u8"))
-						playM3U8(streamURI);
-					else
-						throw new Exception("Stream non supportato");
-						//playAAC(openConnection(streamURI));
-
-				} catch (Exception ex) {
-					System.err.println("Impossibile riprodurre stream [Errore: " + ex.getMessage() + "]");
-					return;
-				}
-			}
-
-			private void playM3U8(String streamURI) throws Exception {
-				String mediaURI = null;
-				String baseURI = StringUtils.substring(streamURI, 0, streamURI.lastIndexOf('/'));
-				System.out.println(streamURI);
-				System.out.println(baseURI);
-				try (BufferedReader br = new BufferedReader(
-						new InputStreamReader(openConnection(streamURI).openStream()))) {
-					String line = null;
-					while ((line = br.readLine()) != null) {
-						if (!StringUtils.startsWith(line, "#")) {
-							if (StringUtils.contains(line, ".m3u")) {
-								playM3U8(baseURI + "/" + line);
-							} else if (StringUtils.contains(line, ".aac")) {
-								mediaURI = baseURI + "/" + line;
-								break;
-							}
-						}
+		try {
+			isPlaying = true;
+			if (StringUtils.contains(streamURI, "m3u")) {
+				String baseURL = streamURI.substring(0, streamURI.lastIndexOf('/'));
+				try (BufferedReader br = new BufferedReader(new InputStreamReader(new URL(streamURI).openStream()))) {
+					String line, file = null;
+					while ((line = br.readLine()) != null)
+						file = line;
+					if (StringUtils.isNotEmpty(file)) {
+						System.out.println("Line: " + file);
+						play(baseURL + "/" + file);
 					}
-					System.out.println(mediaURI);
-					if (StringUtils.isNotBlank(mediaURI))
-						playAAC(openConnection(mediaURI));
 				}
+			} else if (StringUtils.contains(streamURI, "mp3"))
+				play(new URL(streamURI));
+			 else if (StringUtils.contains(streamURI, "aac"))
+				 playAAC(new URL(streamURI));
+			else {
+				System.out.println(streamURI);
+//				play(new URL(streamURI));
+				ChromeOptions options = new ChromeOptions();
+				options.addArguments("--headless");
+
+				driver = new ChromeDriver(new ChromeDriverService.Builder().usingAnyFreePort()
+						.withWhitelistedIps("194.71.95.177").build(), options);
+				
+				driver.get(streamURI);
+				
 			}
-
-		});
-
+		} catch (Exception ex) {
+			ex.printStackTrace();
+			System.err.println("Impossibile riprodurre stream [Errore: " + ex.getMessage() + "]");
+			return;
+		}
 	}
 
-	private URL openConnection(String uri) throws IOException {
-		URL url = new URL(uri);
-		url.openConnection();
-		return url;
+	private void playAAC(URL stream) {
+		isPlaying = true;
+		System.out.println("Reading: " + stream.toString());
+		try {
+			SourceDataLine sourceDataLine = null;
+			byte[] b;
+			final ADTSDemultiplexer adts = new ADTSDemultiplexer(stream.openStream());
+			final Decoder dec = new Decoder(adts.getDecoderSpecificInfo());
+			final SampleBuffer buf = new SampleBuffer();
+			isPlaying = true;
+			while ((b = adts.readNextFrame()) != null) {
+				dec.decodeFrame(b, buf);
+
+				if (sourceDataLine == null) {
+					final AudioFormat aufmt = new AudioFormat(buf.getSampleRate(), buf.getBitsPerSample(),
+							buf.getChannels(), true, true);
+					sourceDataLine = AudioSystem.getSourceDataLine(aufmt);
+					sourceDataLine.open();
+					sourceDataLine.start();
+				}
+				b = buf.getData();
+				System.out.println(b);
+				sourceDataLine.write(b, 0, b.length);
+			}
+		} catch (IOException e) {
+		} catch (LineUnavailableException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	private static void playMP4(URL stream) throws Exception {
+		SourceDataLine line = null;
+		byte[] b;
+		try {
+			final MP4Container cont = new MP4Container(stream.openStream());
+			final Movie movie = cont.getMovie();
+			final List<Track> tracks = movie.getTracks(AudioTrack.AudioCodec.AAC);
+			if(tracks.isEmpty()) throw new Exception("movie does not contain any AAC track");
+			final AudioTrack track = (AudioTrack) tracks.get(0);
+
+			final Decoder dec = new Decoder(track.getDecoderSpecificInfo());
+
+			Frame frame;
+			final SampleBuffer buf = new SampleBuffer();
+			while(track.hasMoreFrames()) {
+				frame = track.readNextFrame();
+				try {
+					dec.decodeFrame(frame.getData(), buf);
+
+					if (line == null) {
+						final AudioFormat aufmt = new AudioFormat(buf.getSampleRate(), buf.getBitsPerSample(),
+								buf.getChannels(), true, true);
+						line = AudioSystem.getSourceDataLine(aufmt);
+						line.open();
+						line.start();
+					}
+					b = buf.getData();
+					System.out.println(b);
+					line.write(b, 0, b.length);
+				} catch(AACException e) {
+					e.printStackTrace();
+				}
+			}
+		} finally {
+			if(line!=null) {
+				line.stop();
+				line.close();
+			}
+		}
 	}
 
 	private void initDriver() throws Exception {
@@ -214,7 +293,7 @@ public class RadiostreamerGui extends JPanel {
 		} else if (isUnix()) {
 			chromeDriverUrl = ResourceUtils.getURL("classpath:bin/chromedriver-amd64");
 		} else {
-			System.out.println("OS not recognized");
+			System.err.println("OS not recognized");
 			System.exit(1);
 		}
 
@@ -231,46 +310,49 @@ public class RadiostreamerGui extends JPanel {
 			Files.setPosixFilePermissions(Paths.get(chromeDriverFile.getAbsolutePath()),
 					PosixFilePermissions.fromString("rwxr-xr--"));
 		System.setProperty("webdriver.chrome.driver", chromeDriverFile.getAbsolutePath());
-	}
-
-	private void playAAC(URL streamURL) throws Exception {
-		SourceDataLine line = null;
-		byte[] b;
-		final ADTSDemultiplexer adts = new ADTSDemultiplexer(streamURL.openStream());
-		final Decoder dec = new Decoder(adts.getDecoderSpecificInfo());
-		final SampleBuffer buf = new SampleBuffer();
-		isPlaying = true;
-		while (!stop) {
-			b = adts.readNextFrame();
-			dec.decodeFrame(b, buf);
-
-			if (line == null) {
-				final AudioFormat aufmt = new AudioFormat(buf.getSampleRate(), buf.getBitsPerSample(),
-						buf.getChannels(), true, true);
-				line = AudioSystem.getSourceDataLine(aufmt);
-				line.open();
-				line.start();
-			}
-			b = buf.getData();
-			line.write(b, 0, b.length);
-		}
-		stop = false;
+		chromeDriverFile.deleteOnExit();
+		f.deleteOnExit();
 	}
 
 	private void play(URL streamURL) throws Exception {
-		player = new Player(streamURL.openStream());
-		player.play();
+		boolean isM3U8 = StringUtils.contains(streamURL.toURI().toString(), "m3u");
+		System.out.println(isM3U8);
+		System.out.println(streamURL.toURI().toString());
+		Media media = new Media(streamURL.toURI().toString());
+		if (media.getError() == null) {
+			media.setOnError(new Runnable() {
+				public void run() {
+					media.getError().printStackTrace();
+				}
+			});
+			MediaPlayer player = new MediaPlayer(media);
+			if (player.getError() == null) {
+				player.setOnError(new Runnable() {
+					public void run() {
+						player.getError().printStackTrace();
+					}
+				});
+				player.play();
+			} else {
+				media.getError().printStackTrace();
+			}
+		} else {
+			media.getError().printStackTrace();
+		}
 	}
 
 	private void stop() {
-		if (player != null)
-			player.close();
-		else if(isPlaying) {
-			stop = true;
+		if (isPlaying)
 			isPlaying = false;
+		if (readAACThread != null) {
+			readAACThread.cancel(true);
+			readAACThread = null;
+			aacBuffer.clear();
 		}
-		if (playerThread != null)
+		if (playerThread != null) {
 			playerThread.cancel(true);
+			playerThread = null;
+		}
 	}
 
 }

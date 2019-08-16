@@ -3,11 +3,13 @@ package it.loxdegio.radiostreamer;
 import java.awt.EventQueue;
 import java.awt.Toolkit;
 
+import javax.swing.ImageIcon;
+
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.annotation.ComponentScan;
-import org.springframework.util.ResourceUtils;
+import org.springframework.core.io.ClassPathResource;
 
 import it.loxdegio.radiostreamer.core.Radiostreamer;
 
@@ -23,9 +25,10 @@ public class Application implements CommandLineRunner {
 		EventQueue.invokeLater(new Runnable() {
 			public void run() {
 				try {
+					com.sun.javafx.application.PlatformImpl.startup(()->{});
 					Radiostreamer frame = new Radiostreamer();
 					frame.setTitle("Radiostreamer");
-					frame.setIconImage(Toolkit.getDefaultToolkit().getImage(ResourceUtils.getURL("classpath:images/radio.svg")));
+					frame.setIconImage(new ImageIcon(getClass().getClassLoader().getResource("images/radio.svg")).getImage());
 					frame.setVisible(true);
 				} catch (Exception e) {
 					e.printStackTrace();
