@@ -11,8 +11,9 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.io.RandomAccessFile;
+import java.net.MalformedURLException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -32,6 +33,7 @@ import javax.swing.JPanel;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -67,7 +69,7 @@ public class RadiostreamerGui extends JPanel {
 
 	private WebDriver driver;
 
-	private Future<?> playerThread, readAACThread;
+	private Future<?> playerThread, playAACThread;
 
 	private ExecutorService executor = Executors.newFixedThreadPool(10);
 
@@ -77,7 +79,9 @@ public class RadiostreamerGui extends JPanel {
 
 	List<byte[]> aacBuffer;
 
-	private boolean isPlaying = false, isAAC = false;
+	Double secondsToWait;
+
+	private boolean isPlaying = false;
 
 	public RadiostreamerGui(LayoutManager layout) throws Exception {
 
@@ -137,10 +141,10 @@ public class RadiostreamerGui extends JPanel {
 
 							@Override
 							public void run() {
-								while (true) {
+								while (!Thread.currentThread().isInterrupted()) {
 									play(url);
 									try {
-										Thread.sleep(9900);
+										Thread.sleep((int) (secondsToWait * 1000));
 									} catch (InterruptedException e) {
 									}
 								}
@@ -178,32 +182,34 @@ public class RadiostreamerGui extends JPanel {
 	private void play(final String streamURI) {
 		try {
 			isPlaying = true;
-			if (StringUtils.contains(streamURI, "m3u")) {
+			if (StringUtils.contains(URLConnection.guessContentTypeFromStream(new URL(streamURI).openStream()), "m3u")
+					|| StringUtils.contains(streamURI, "m3u")) {
 				String baseURL = streamURI.substring(0, streamURI.lastIndexOf('/'));
 				try (BufferedReader br = new BufferedReader(new InputStreamReader(new URL(streamURI).openStream()))) {
 					String line, file = null;
-					while ((line = br.readLine()) != null)
-						file = line;
-					if (StringUtils.isNotEmpty(file)) {
-						System.out.println("Line: " + file);
-						play(baseURL + "/" + file);
+					while ((line = br.readLine()) != null) {
+						String extinf = StringUtils.replace(line, "#EXTINF:", StringUtils.EMPTY);
+						String[] inf = extinf.split(",");
+						System.out.println("line: " + inf[0]);
+						if (NumberUtils.isCreatable(inf[0]))
+							secondsToWait = Double.parseDouble(inf[0]);
+						else
+							file = line;
 					}
+					play(baseURL + "/" + file);
 				}
-			} else if (StringUtils.contains(streamURI, "mp3"))
-				play(new URL(streamURI));
-			 else if (StringUtils.contains(streamURI, "aac"))
-				 playAAC(new URL(streamURI));
+			} else if (StringUtils.contains(streamURI, "aac"))
+				playAACThread = executor.submit(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							playAAC(new URL(streamURI));
+						} catch (MalformedURLException e) {
+						}
+					}
+				});
 			else {
-				System.out.println(streamURI);
-//				play(new URL(streamURI));
-				ChromeOptions options = new ChromeOptions();
-				options.addArguments("--headless");
-
-				driver = new ChromeDriver(new ChromeDriverService.Builder().usingAnyFreePort()
-						.withWhitelistedIps("194.71.95.177").build(), options);
-				
-				driver.get(streamURI);
-				
+				play(new URL(streamURI));
 			}
 		} catch (Exception ex) {
 			ex.printStackTrace();
@@ -213,8 +219,6 @@ public class RadiostreamerGui extends JPanel {
 	}
 
 	private void playAAC(URL stream) {
-		isPlaying = true;
-		System.out.println("Reading: " + stream.toString());
 		try {
 			SourceDataLine sourceDataLine = null;
 			byte[] b;
@@ -222,7 +226,7 @@ public class RadiostreamerGui extends JPanel {
 			final Decoder dec = new Decoder(adts.getDecoderSpecificInfo());
 			final SampleBuffer buf = new SampleBuffer();
 			isPlaying = true;
-			while ((b = adts.readNextFrame()) != null) {
+			while ((b = adts.readNextFrame()) != null && !Thread.currentThread().isInterrupted()) {
 				dec.decodeFrame(b, buf);
 
 				if (sourceDataLine == null) {
@@ -233,7 +237,6 @@ public class RadiostreamerGui extends JPanel {
 					sourceDataLine.start();
 				}
 				b = buf.getData();
-				System.out.println(b);
 				sourceDataLine.write(b, 0, b.length);
 			}
 		} catch (IOException e) {
@@ -241,7 +244,7 @@ public class RadiostreamerGui extends JPanel {
 			e.printStackTrace();
 		}
 	}
-	
+
 	private static void playMP4(URL stream) throws Exception {
 		SourceDataLine line = null;
 		byte[] b;
@@ -249,14 +252,15 @@ public class RadiostreamerGui extends JPanel {
 			final MP4Container cont = new MP4Container(stream.openStream());
 			final Movie movie = cont.getMovie();
 			final List<Track> tracks = movie.getTracks(AudioTrack.AudioCodec.AAC);
-			if(tracks.isEmpty()) throw new Exception("movie does not contain any AAC track");
+			if (tracks.isEmpty())
+				throw new Exception("movie does not contain any AAC track");
 			final AudioTrack track = (AudioTrack) tracks.get(0);
 
 			final Decoder dec = new Decoder(track.getDecoderSpecificInfo());
 
 			Frame frame;
 			final SampleBuffer buf = new SampleBuffer();
-			while(track.hasMoreFrames()) {
+			while (track.hasMoreFrames()) {
 				frame = track.readNextFrame();
 				try {
 					dec.decodeFrame(frame.getData(), buf);
@@ -269,14 +273,13 @@ public class RadiostreamerGui extends JPanel {
 						line.start();
 					}
 					b = buf.getData();
-					System.out.println(b);
 					line.write(b, 0, b.length);
-				} catch(AACException e) {
+				} catch (AACException e) {
 					e.printStackTrace();
 				}
 			}
 		} finally {
-			if(line!=null) {
+			if (line != null) {
 				line.stop();
 				line.close();
 			}
@@ -315,10 +318,7 @@ public class RadiostreamerGui extends JPanel {
 	}
 
 	private void play(URL streamURL) throws Exception {
-		boolean isM3U8 = StringUtils.contains(streamURL.toURI().toString(), "m3u");
-		System.out.println(isM3U8);
-		System.out.println(streamURL.toURI().toString());
-		Media media = new Media(streamURL.toURI().toString());
+		Media media = new Media(streamURL.toString());
 		if (media.getError() == null) {
 			media.setOnError(new Runnable() {
 				public void run() {
@@ -332,26 +332,29 @@ public class RadiostreamerGui extends JPanel {
 						player.getError().printStackTrace();
 					}
 				});
-				player.play();
+				player.setAutoPlay(true);
+				mediaView = new MediaView(player);
 			} else {
-				media.getError().printStackTrace();
+				throw media.getError();
 			}
 		} else {
-			media.getError().printStackTrace();
+			throw media.getError();
 		}
 	}
 
-	private void stop() {
+	private void stop() throws Exception {
 		if (isPlaying)
 			isPlaying = false;
-		if (readAACThread != null) {
-			readAACThread.cancel(true);
-			readAACThread = null;
-			aacBuffer.clear();
+		if (playAACThread != null) {
+			playAACThread.cancel(true);
+			playAACThread = null;
+			secondsToWait = 0.0;
 		}
 		if (playerThread != null) {
-			playerThread.cancel(true);
-			playerThread = null;
+			if (playerThread.cancel(true))
+				playerThread = null;
+			else
+				throw new Exception("Cannot stop thread");
 		}
 	}
 
