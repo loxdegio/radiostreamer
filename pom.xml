@@ -83,7 +83,6 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
-			<version>${commons.lang.version}</version>
 		</dependency>
 		<!-- UTILS END -->
 		<dependency>
@@ -96,17 +95,11 @@
 		<resources>
 			<resource>
 				<directory>src/main/resources</directory>
-				<filtering>false</filtering>
-				<excludes>
-					<exclude>META-INF/MANIFEST.MF</exclude>
-				</excludes>
-			</resource>
-			<resource>
-				<directory>src/main/resources</directory>
 				<filtering>true</filtering>
 				<excludes>
 					<exclude>bin/*</exclude>
 					<exclude>images/*</exclude>
+					<exclude>application.properties</exclude>
 				</excludes>
 			</resource>
 		</resources>
