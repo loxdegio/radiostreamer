@@ -1,24 +1,37 @@
 package it.loxdegio.radiostreamer.core;
 
-import java.awt.GridLayout;
-
+import javax.annotation.PostConstruct;
 import javax.swing.JFrame;
 
-import it.loxdegio.radiostreamer.gui.RadiostreamerGui;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
+import it.loxdegio.radiostreamer.gui.RadiostreamerGui;
+import it.loxdegio.radiostreamer.services.WebDriverService;
+
+@Component
 public class Radiostreamer extends JFrame{
 
 	private static final long serialVersionUID = 316549591825631163L;
 	
+	@Autowired
 	private RadiostreamerGui gui;
-	public Radiostreamer() throws Exception {
+	
+	@Autowired
+	private WebDriverService driverService;
+	
+	@PostConstruct
+	public void postConstruct() throws Exception {
 		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-		GridLayout layout = new GridLayout(0, 5);
-		layout.setHgap(5);
-		layout.setVgap(5);
-		gui = new RadiostreamerGui(layout);
+		addWindowListener(new java.awt.event.WindowAdapter() {
+		    @Override
+		    public void windowClosing(java.awt.event.WindowEvent windowEvent) {
+		        driverService.closeBrowser();
+		    }
+		});
 		setContentPane(gui);
 		pack();
 	}
+	
 
 }
