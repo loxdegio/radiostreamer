@@ -1,11 +1,15 @@
 package it.loxdegio.radiostreamer.core;
 
+import java.awt.GridLayout;
+
 import javax.annotation.PostConstruct;
 import javax.swing.JFrame;
+import javax.swing.JPanel;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import it.loxdegio.radiostreamer.gui.RadiostreamerControls;
 import it.loxdegio.radiostreamer.gui.RadiostreamerGui;
 import it.loxdegio.radiostreamer.services.WebDriverService;
 
@@ -16,6 +20,9 @@ public class Radiostreamer extends JFrame{
 	
 	@Autowired
 	private RadiostreamerGui gui;
+	
+	@Autowired
+	private RadiostreamerControls controls;
 	
 	@Autowired
 	private WebDriverService driverService;
@@ -29,7 +36,13 @@ public class Radiostreamer extends JFrame{
 		        driverService.closeBrowser();
 		    }
 		});
-		setContentPane(gui);
+		GridLayout layout = new GridLayout(2, 1);
+		layout.setHgap(5);
+		layout.setVgap(5);
+		JPanel generalPanel = new JPanel(layout);
+		generalPanel.add(gui);
+		generalPanel.add(controls);
+		setContentPane(generalPanel);
 		pack();
 	}
 	

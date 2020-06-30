@@ -2,6 +2,8 @@ package it.loxdegio.radiostreamer;
 
 import java.awt.EventQueue;
 
+import javax.swing.ImageIcon;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -32,7 +34,7 @@ public class Application implements CommandLineRunner {
 					driverService.initDriver();
 					
 					frame.setTitle("Radiostreamer");
-//					frame.setIconImage(new ImageIcon(getClass().getClassLoader().getResource("images/radio.svg")).getImage());
+					frame.setIconImage(new ImageIcon(getClass().getClassLoader().getResource("images/radio.svg")).getImage());
 					frame.setVisible(true);
 
 				} catch (Exception e) {

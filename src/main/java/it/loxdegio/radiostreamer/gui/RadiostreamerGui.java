@@ -56,7 +56,7 @@ public class RadiostreamerGui extends JPanel {
 
 		for (Element radioStation : radioStations) {
 			final Elements link = radioStation.select("a");
-			final RadiostreamButton button = new RadiostreamButton(link.get(0).absUrl("href"), link.get(0).text());
+			final RadiostreamerButton button = new RadiostreamerButton(link.get(0).absUrl("href"), link.get(0).text());
 			button.addMouseListener(new MouseListener() {
 				public void mouseClicked(MouseEvent e) {
 					try {
@@ -73,7 +73,7 @@ public class RadiostreamerGui extends JPanel {
 						} catch (Exception ex) {
 							WebElement script = new WebDriverWait(webDriverService.driver, 10)
 									.until(ExpectedConditions.presenceOfElementLocated(By.xpath(
-											".//*/script[contains(text(), 'mp3:'")));
+											".//*/script[contains(text(), 'mp3:')]")));
 
 							src = StringUtils.substringBetween(script.getAttribute("innerHTML"),
 									"$(document).ready(function(){var stream={mp3:\"", "\"}");
