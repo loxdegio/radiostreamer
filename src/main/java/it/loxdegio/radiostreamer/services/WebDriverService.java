@@ -8,6 +8,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
@@ -16,8 +17,11 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import javax.annotation.PostConstruct;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeDriverService;
 import org.openqa.selenium.chrome.ChromeOptions;
@@ -33,39 +37,79 @@ public class WebDriverService {
 	private static final String CDN_BASEURL = "https://chromedriver.storage.googleapis.com";
 	private static final String CDN_LATESTURL = CDN_BASEURL + "/LATEST_RELEASE_%s";
 	private static final String CDN_VERSIONURL = CDN_BASEURL + "/%s/chromedriver_%s.zip";
-	
+	private static final String CHROME_VERSION_PS = "(Get-Item (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe').'(Default)').VersionInfo.ProductVersion";
+	private static final String CHROME_VERSION_SH = "$s --product-version";
+	private static final String CHROME_VERSION_OSX = "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --version";
+	private static final String CHROME_STRING = "google-chrome";
+	private static final String CHROMIUM_STRING = "chromium";
+	private static final String CHROMEIUM_WICH_SH = "which %s";
+
 	private static final File driverDir = new File(FileUtils.getTempDirectory(), "Driver");
+
+	private Runtime shell;
 
 	public ChromeDriver driver;
 
-	public void initDriver() throws Exception {
+	@PostConstruct
+	public void postConstruct() {
+		if (isUnix() || isMac())
+			shell = Runtime.getRuntime();
+	}
 
-		PowerShellResponse response = PowerShell.executeSingleCommand(
-				"(Get-Item (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe').'(Default)').VersionInfo.ProductVersion");
-		String chromeVersion = response.getCommandOutput();
+	public void initDriver() throws Exception {
+		String chromeVersion = getChromeVersion();
 
 		saveDriverFile(getChromeDriverResourceUrl(Optional.fromNullable(chromeVersion.split("\\.")[0])));
 
 	}
 
-	private URL getChromeDriverResourceUrl(Optional<String> majorVersion) throws IOException {
-		URL lastestDriverVersionURL = new URL(String.format(CDN_LATESTURL, majorVersion.or("83")));
-		System.out.println(lastestDriverVersionURL.toString());
-		String lastestDriverVersion = IOUtils.toString(lastestDriverVersionURL.openStream(), Charset.defaultCharset());
-
-		String chromeDriverURI = String.format(CDN_VERSIONURL, lastestDriverVersion, "%s");
-		URL chromeDriverURL = null;
+	private String getChromeVersion() throws IOException {
+		String chromeVersion = StringUtils.EMPTY;
 		if (isWindows()) {
-			chromeDriverURL = new URL(String.format(chromeDriverURI, "win32"));
-		} else if (isMac()) {
-			chromeDriverURL = new URL(String.format(chromeDriverURI, "mac64"));
+			PowerShellResponse response = PowerShell.executeSingleCommand(CHROME_VERSION_PS);
+			chromeVersion = response.getCommandOutput();
 		} else if (isUnix()) {
-			chromeDriverURL = new URL(String.format(chromeDriverURI, "linux64"));
+			Process p = shell.exec(String.format(CHROMEIUM_WICH_SH, CHROME_STRING));
+			String chromeExecutable = inputStreamToString(p.getInputStream());
+			if (StringUtils.isBlank(chromeExecutable)) {
+				p = shell.exec(String.format(CHROMEIUM_WICH_SH, CHROMIUM_STRING));
+				chromeExecutable = inputStreamToString(p.getInputStream());
+				if (StringUtils.isBlank(chromeExecutable))
+					throw new RuntimeException("Chrome/Chromium not found on your system");
+			}
+			p = shell.exec(String.format(CHROME_VERSION_SH, chromeExecutable));
+			chromeVersion = inputStreamToString(p.getInputStream());
+		} else if (isMac()) {
+			Process p = shell.exec(CHROME_VERSION_OSX);
+			chromeVersion = inputStreamToString(p.getInputStream());
 		} else {
 			System.err.println("OS not recognized");
 			System.exit(1);
 		}
-		return chromeDriverURL;
+		return chromeVersion;
+	}
+
+	private URL getChromeDriverResourceUrl(Optional<String> majorVersion) throws IOException {
+		URL lastestDriverVersionURL = new URL(String.format(CDN_LATESTURL, majorVersion.or("83")));
+		System.out.println(lastestDriverVersionURL.toString());
+		String lastestDriverVersion = inputStreamToString(lastestDriverVersionURL.openStream());
+
+		String chromeDriverURI = String.format(CDN_VERSIONURL, lastestDriverVersion, "%s");
+		if (isWindows()) {
+			chromeDriverURI = String.format(chromeDriverURI, "win32");
+		} else if (isMac()) {
+			chromeDriverURI = String.format(chromeDriverURI, "mac64");
+		} else if (isUnix()) {
+			chromeDriverURI = String.format(chromeDriverURI, "linux64");
+		} else {
+			System.err.println("OS not recognized");
+			System.exit(1);
+		}
+		return new URL(chromeDriverURI);
+	}
+
+	private String inputStreamToString(InputStream inputStream) throws IOException {
+		return IOUtils.toString(inputStream, Charset.defaultCharset());
 	}
 
 	private void saveDriverFile(URL url) throws IOException {
