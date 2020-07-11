@@ -38,7 +38,7 @@ public class WebDriverService {
 	private static final String CDN_LATESTURL = CDN_BASEURL + "/LATEST_RELEASE_%s";
 	private static final String CDN_VERSIONURL = CDN_BASEURL + "/%s/chromedriver_%s.zip";
 	private static final String CHROME_VERSION_PS = "(Get-Item (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe').'(Default)').VersionInfo.ProductVersion";
-	private static final String CHROME_VERSION_SH = "$s --product-version";
+	private static final String CHROME_VERSION_SH = "%s --product-version";
 	private static final String CHROME_VERSION_OSX = "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --version";
 	private static final String CHROME_STRING = "google-chrome";
 	private static final String CHROMIUM_STRING = "chromium";
